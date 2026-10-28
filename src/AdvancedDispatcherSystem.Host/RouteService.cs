@@ -62,11 +62,20 @@ public sealed partial class StateHub
         double DynamicPenalty(string id)
         {
             double penalty = 0;
-            if ((trackCars.TryGetValue(id, out var members) && members.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist)) ||
-                (nativeTrackCars.TryGetValue(id, out var nativeMembers) && nativeMembers.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist)))
+            bool foreignCarPresent = (trackCars.TryGetValue(id, out var members) && members.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist)) ||
+                (nativeTrackCars.TryGetValue(id, out var nativeMembers) && nativeMembers.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist));
+            if (foreignCarPresent)
                 penalty += 100000;
-            if (occupancy.TryGetValue(id, out var sample) && sample.occupied && !membersOrOwn(id, ownConsist))
-                penalty += 100000;
+            else if (occupancy.TryGetValue(id, out var sample) && sample.occupied)
+            {
+                // Only penalize if there are known foreign cars reported on this track.
+                // An occupied flag with zero cars is a phantom/stuck sensor and must not block route planning.
+                if (sample.cars != null && sample.cars.Length > 0 && !membersOrOwn(id, ownConsist))
+                {
+                    if (sample.cars.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist))
+                        penalty += 100000;
+                }
+            }
             if (reservedTracks.Contains(id))
                 penalty += 150000;
             return ignoreRouteId!=null && penalty>0 ? double.PositiveInfinity : penalty;

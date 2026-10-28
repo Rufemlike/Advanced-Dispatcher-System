@@ -140,13 +140,30 @@ namespace AdvancedDispatcherSystem.Game
             if (auditTopology && LinkSignature(track) != linkSignatures[index]) RequestRebuild();
             var component = trackOccupancy[index];
             if (component == null) trackOccupancy[index] = component = track.GetComponent<RailTrackBogiesOnTrack>();
-            bool occupied = component != null && component.bogiesOnTrack.Count > 0;
-            var owners = component?.bogiesOnTrack?.Select(b => b == null ? null : b.Car?.CarGUID).ToArray() ?? new string[0];
-            bool ownersKnown = component != null && owners.Length == component.bogiesOnTrack.Count && owners.All(x => !string.IsNullOrEmpty(x));
-            string id = TrackId(track);
-            if (id != null && (!occupancyStates.TryGetValue(id, out var previous) || previous.occupied != occupied || previous.carsKnown != ownersKnown || !previous.cars.SequenceEqual(owners) || Protocol.Now - previous.sampledAt > 3000))
+            bool occupied = false;
+            var owners = new List<string>();
+            bool ownersKnown = true;
+            if (component != null && component.bogiesOnTrack != null)
             {
-                var value = new OccupancyState { id = id, occupied = occupied, cars = ownersKnown ? owners.Distinct().ToArray() : new string[0], carsKnown = ownersKnown, sampledAt = Protocol.Now }; occupancyStates[id] = value; changedOccupancy.Add(value);
+                var dead = new List<Bogie>();
+                foreach (var bogie in component.bogiesOnTrack)
+                {
+                    if (bogie == null || bogie.gameObject == null || bogie.HasDerailed || bogie.Car == null || !bogie.gameObject.activeInHierarchy)
+                    {
+                        dead.Add(bogie);
+                        continue;
+                    }
+                    if (!string.IsNullOrEmpty(bogie.Car.CarGUID))
+                        owners.Add(bogie.Car.CarGUID);
+                }
+                foreach (var d in dead) component.bogiesOnTrack.Remove(d);
+                occupied = component.bogiesOnTrack.Count > 0;
+            }
+            string[] ownerArray = owners.Distinct().ToArray();
+            string id = TrackId(track);
+            if (id != null && (!occupancyStates.TryGetValue(id, out var previous) || previous.occupied != occupied || previous.carsKnown != ownersKnown || !previous.cars.SequenceEqual(ownerArray) || Protocol.Now - previous.sampledAt > 3000))
+            {
+                var value = new OccupancyState { id = id, occupied = occupied, cars = ownerArray, carsKnown = ownersKnown, sampledAt = Protocol.Now }; occupancyStates[id] = value; changedOccupancy.Add(value);
             }
         }
         private int LinkSignature(RailTrack track)

@@ -1,7 +1,8 @@
 using System;
 using System.Linq;
 
-namespace AdvancedDispatcherSystem.Core;
+namespace AdvancedDispatcherSystem.Core
+{
 
 /// <summary>
 /// Creates an explicit stale copy when a game-side job capture is invalidated.
@@ -93,4 +94,5 @@ public static class JobSnapshotQuality
             cars = (source.cars ?? Array.Empty<string>()).ToArray(),
         };
     }
+}
 }

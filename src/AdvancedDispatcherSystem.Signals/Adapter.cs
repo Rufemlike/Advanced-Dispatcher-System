@@ -402,7 +402,32 @@ namespace AdvancedDispatcherSystem.Signals
             if (track == null) return false;
             if (!occupiedTracks.TryGetValue(track, out var sample) || now >= sample.until)
             {
-                sample = new Occupancy { value = TrackChecker.IsOccupied(track, CrossingCheckMode.IntersectionOnly), until = now + 0.5f }; occupiedTracks[track] = sample;
+                bool occupied = TrackChecker.IsOccupied(track, CrossingCheckMode.IntersectionOnly);
+                if (occupied)
+                {
+                    var bogies = track.GetComponent<RailTrackBogiesOnTrack>();
+                    if (bogies != null && bogies.bogiesOnTrack != null)
+                    {
+                        bool anyActive = false;
+                        var dead = new List<Bogie>();
+                        foreach (var b in bogies.bogiesOnTrack)
+                        {
+                            if (b == null || b.gameObject == null || b.HasDerailed || b.Car == null || !b.gameObject.activeInHierarchy)
+                            {
+                                dead.Add(b);
+                                continue;
+                            }
+                            anyActive = true;
+                        }
+                        foreach (var d in dead) bogies.bogiesOnTrack.Remove(d);
+                        if (!anyActive) occupied = false;
+                    }
+                    else
+                    {
+                        occupied = false;
+                    }
+                }
+                sample = new Occupancy { value = occupied, until = now + 0.5f }; occupiedTracks[track] = sample;
             }
             return sample.value;
         }
