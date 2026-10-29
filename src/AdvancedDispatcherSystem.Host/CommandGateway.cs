@@ -179,6 +179,6 @@ public sealed class CommandGateway
         hub.RouteOperation(id,"active");
         return new CommandResult {target=id,status="applied",warnings=hub.Route(id)?.warnings??[]};
         }
-        catch(Exception e) { Console.Error.WriteLine("ROUTE_EXECUTION_FAILED " + e.GetType().Name); return await Fail("COMMAND_FAILED", "outcomeUnknown"); }
+        catch(Exception e) { Console.Error.WriteLine("ROUTE_EXECUTION_FAILED " + e); return await Fail("COMMAND_FAILED", "outcomeUnknown"); }
     }
 }

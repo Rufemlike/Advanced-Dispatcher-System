@@ -92,7 +92,8 @@ public sealed class GameConnection
     {
         var waiter = new TaskCompletionSource<CommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (pending.Count >= 64 || !pending.TryAdd(command.id, waiter)) return new CommandResult { id = command.id, status = "rejected", code = "QUEUE_FULL" };
-        int timeout = command.kind == "setTurntable" ? 45000 : 8000;
+        int timeout = command.kind == "setTurntable" ? 45000 :
+            command.kind == "watchRoute" || command.kind == "reserveGameRoute" || command.kind == "replaceGameRoute" || command.kind == "releaseGameRoute" ? 30000 : 8000;
         command.deadline = Protocol.Now + timeout;
         bool sent;
         lock (sync) sent = outgoing != null && outgoing.Writer.TryWrite(new WireFrame { kind = "command", command = command });

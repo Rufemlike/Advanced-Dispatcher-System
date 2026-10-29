@@ -137,7 +137,7 @@ public sealed partial class StateHub
     }
     public void RouteOperation(string id,string state,string reason=null,string mode=null)
     {
-        lock(sync)if(routes.TryGetValue(id??"",out var r)&&!Ended(r)) {r.lifecycle=state;r.reason=reason;if(mode!=null && r.reservationState!="reserved"){r.reservationMode=mode;if(r.staged&&mode!="none")r.stagedReservationMode=mode;}UpdateRoutes(true);}
+        lock(sync)if(routes.TryGetValue(id??"",out var r)&&!Ended(r)) {r.lifecycle=state;r.reason=reason;if(state=="failed"||state=="completed"||state=="cancelled")r.endedAt=Protocol.Now;if(mode!=null && r.reservationState!="reserved"){r.reservationMode=mode;if(r.staged&&mode!="none")r.stagedReservationMode=mode;}UpdateRoutes(true);}
     }
     private void RefreshRecalculationState(RoutePlan route)
     {

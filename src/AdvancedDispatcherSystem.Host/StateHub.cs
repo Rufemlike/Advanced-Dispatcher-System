@@ -331,7 +331,15 @@ public sealed partial class StateHub
     }
     public void Receipt(Command command, CommandResult result)
     {
-        lock (sync) Log(result.status == "applied" ? command.kind : result.code, command.actor, command.target, result.status, "command", result.status == "applied" ? "info" : "warning", "dispatcher");
+        lock (sync)
+        {
+            Log(result.status == "applied" ? command.kind : result.code, command.actor, command.target, result.status, "command", result.status == "applied" ? "info" : "warning", "dispatcher");
+            if (result.status == "applied" && command.kind == "setSwitch" && !string.IsNullOrEmpty(command.target) && switches.TryGetValue(command.target, out var sw))
+            {
+                sw.branch = command.branch;
+                if (result.revision > 0) sw.revision = result.revision;
+            }
+        }
     }
     public string Validate(Command c)
     {
