@@ -74,6 +74,7 @@ namespace AdvancedDispatcherSystem.Core
             if (required.Any(id => string.IsNullOrEmpty(id) || !Tracks.ContainsKey(id))) return null;
 
             var turnbacks = new HashSet<string>(passengerStops ?? Array.Empty<string>(), StringComparer.Ordinal);
+            foreach (var v in via) turnbacks.Add(v);
             var labels = new List<TraversalLabel>();
             var heap = new MinHeap();
             var expanded = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -327,7 +328,7 @@ namespace AdvancedDispatcherSystem.Core
                 if(!frontiers.TryGetValue(key,out var prior))frontiers[key]=prior=new List<PathLabel>();
                 if(prior.Any(p=>Dominates(p,label)))return;
                 foreach(var p in prior.Where(p=>Dominates(label,p)).ToArray()){p.superseded=true;prior.Remove(p);}
-                if(labels.Count>=8192 || timer.ElapsedMilliseconds>1000)throw new RouteSearchLimitException();
+                if(labels.Count>=32768 || timer.ElapsedMilliseconds>5000)throw new RouteSearchLimitException();
                 label.index=labels.Count;labels.Add(label);prior.Add(label);heap.Push(label.index.ToString(),label.cost+estimate);
             }
             for(int end=0;end<2;end++)if(direction==0||(end==1?1:-1)==direction) {

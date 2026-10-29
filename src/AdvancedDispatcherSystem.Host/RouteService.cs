@@ -90,16 +90,23 @@ public sealed partial class StateHub
         var passengerStops = JobRouteRules.Passenger(contextJob)
             ? JobRouteRules.RequiredStops(contextJob, routeFrom)
             : null;
-        var plan = (JobRouteRules.Passenger(contextJob)
-            ? Graph?.FindPassengerRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation, passengerStops)
-            : Graph?.FindRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation));
-        // A valid movement may revisit a physical rail after a turnback or
-        // require a different switch phase.  Native reservation cannot hold
-        // that as one footprint, so retain one logical route and expose
-        // separately reservable stages instead of returning a misleading
-        // complexity/no-route error.
+        RoutePlan plan = null;
+        try
+        {
+            plan = (JobRouteRules.Passenger(contextJob)
+                ? Graph?.FindPassengerRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation, passengerStops)
+                : Graph?.FindRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation));
+        }
+        catch (RouteSearchLimitException)
+        {
+            plan = null;
+        }
+        // A valid movement may revisit a physical rail after a turnback,
+        // require a different switch phase, or exceed constrained search complexity on long-distance runs.
+        // Retain one logical route and expose separately reservable stages (or a single stage)
+        // instead of returning a misleading complexity/no-route error.
         if (plan == null)
-            plan = Graph?.FindStagedRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation);
+            plan = Graph?.FindStagedRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation, allowSingleStage: true);
         if (plan != null) {plan.train = car?.consist;plan.trainCar=car?.id;plan.trainCars=context.trainCars;plan.owner=owner;plan.reservationOwner=context.reservationOwner;
             if (!plan.staged) { plan.activeFrom = plan.from; plan.activeTo = plan.to; plan.stageStatus = "single"; plan.stageIndex = 0; plan.stages = Array.Empty<RouteStage>(); }
             plan.assignedPlayerKey=context.assignedPlayerKey;plan.assignedPlayerName=context.assignedPlayerName;}
@@ -297,13 +304,18 @@ public sealed partial class StateHub
             var car=RouteTrain(train);
             if(!string.IsNullOrEmpty(train)&&!car.HasValue)return "TRAIN_UNAVAILABLE";
             if (Graph == null) return "WORLD_NOT_READY";
+            var start = car?.track1 ?? from;
+            var dir = car?.direction ?? 0;
             if (via != null && via.Length > 0) {
-                var start = car?.track1 ?? from;
                 if (via.Length > 128 || via.Any(string.IsNullOrEmpty) || via.Any(id => !Graph.Tracks.ContainsKey(id)) || via.Distinct(StringComparer.Ordinal).Count() != via.Length || via.Contains(start) || via.Contains(to)) return "NO_ROUTE";
-                if(Graph.FindRouteVia(start,to,via,car?.direction??0,car?.span1)!=null)return null;
-                return Graph.HasOrderedWalk(start,to,via,car?.direction??0)?"ROUTE_MANEUVER_REQUIRED":"NO_ROUTE";
+                try {
+                    if(Graph.FindRouteVia(start,to,via,dir,car?.span1)!=null)return null;
+                } catch(RouteSearchLimitException) { }
+                if (Graph.FindStagedRouteVia(start,to,via,dir,car?.span1,allowSingleStage:true)!=null) return "ROUTE_MANEUVER_REQUIRED";
+                return Graph.HasOrderedWalk(start,to,via,dir)?"ROUTE_MANEUVER_REQUIRED":"NO_ROUTE";
             }
-            return Graph.RouteFailure(car?.track1 ?? from,to,car?.direction ?? 0);
+            if (Graph.FindStagedRouteVia(start,to,Array.Empty<string>(),dir,car?.span1,allowSingleStage:true)!=null) return "ROUTE_MANEUVER_REQUIRED";
+            return Graph.RouteFailure(start,to,dir);
         }
     }
     public RoutePlan Plan(string from, string to, string actor, string train = null, bool preparing = false, string[] via = null, string jobId = null, int taskIndex = -1, string taskId=null, bool avoidReservations=true)
