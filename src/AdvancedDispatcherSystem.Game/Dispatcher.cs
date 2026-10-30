@@ -273,7 +273,7 @@ namespace AdvancedDispatcherSystem.Game
                     if (state.branch != j.selectedBranch || c.expectedRevision != state.revision) { ReadSwitch(j); Result(Error("STALE_REVISION")); return; }
                     if (c.branch < 0 || c.branch > byte.MaxValue || c.branch >= j.outBranches.Count) { Result(Error("INVALID_BRANCH")); return; }
                     if (!AllowsProtectedSwitch(j,c.branch,c.routeId)) { Result(Error("SWITCH_LOCKED")); return; }
-                    string unsafeSwitch = j.selectedBranch == c.branch ? null : SwitchSafety(j);
+                    string unsafeSwitch = j.selectedBranch == c.branch ? null : SwitchSafety(j, c.routeId);
                     if (unsafeSwitch != null) { Result(Error(unsafeSwitch)); return; }
                     RememberRouteSwitch(c, j);
                     // Route alignment is a dispatcher operation. FORCED is the

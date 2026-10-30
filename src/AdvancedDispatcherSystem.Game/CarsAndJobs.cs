@@ -270,7 +270,7 @@ namespace AdvancedDispatcherSystem.Game
                 span1 = first?.traveller == null ? 0 : first.traveller.Span,
                 span2 = last?.traveller == null ? 0 : last.traveller.Span,
                 speed = Math.Round(speed * 3.6, 2),
-                direction = Math.Abs(speed) < 0.05f || first == null ? 0 : Math.Sign(speed * first.TrackDirectionSign),
+                direction = Math.Abs(speed) < 0.4f || first == null ? 0 : Math.Sign(speed * first.TrackDirectionSign),
                 consistCargo = car.IsLoco ? ConsistCargo.Capture(car, previousSample.consistCargo) : null,
                 cargoKnown = car.logicCar != null,
                 cargo = car.logicCar == null ? null : JobPresentation.CargoName(car.LoadedCargo),

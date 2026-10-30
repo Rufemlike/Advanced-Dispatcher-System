@@ -59,7 +59,7 @@ app.Use(async (ctx, next) =>
 {
     string requestHost=ctx.Request.Host.Host;
     if(requestHost.StartsWith('[')&&requestHost.EndsWith(']'))requestHost=requestHost[1..^1];
-    if (!allowedHosts.Contains(requestHost) || ctx.Request.Host.Port != port) { ctx.Response.StatusCode = 400; return; }
+    if (!allowedHosts.Contains(requestHost) || ctx.Request.Host.Port != port) { Console.Error.WriteLine($"HOST_MISMATCH: reqHost={requestHost} port={ctx.Request.Host.Port} expectedPort={port}"); ctx.Response.StatusCode = 400; return; }
     string origin = ctx.Request.Headers.Origin;
     string expected = (https ? "https" : "http") + "://" + ctx.Request.Host;
     if ((!string.IsNullOrEmpty(origin) && !string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase)) || (ctx.Request.Method != "GET" && string.IsNullOrEmpty(origin))) { ctx.Response.StatusCode = 403; return; }
@@ -69,7 +69,7 @@ app.Use(async (ctx, next) =>
     if (ctx.Request.Path.StartsWithSegments("/api")) ctx.Response.Headers.CacheControl = "no-store";
     try { await next(); }
     catch (RouteSearchLimitException) { if (!ctx.Response.HasStarted) {ctx.Response.StatusCode=422;await ctx.Response.WriteAsJsonAsync(new {code="ROUTE_SEARCH_LIMIT"});} }
-    catch (Exception e) when (e is JsonException || e is ArgumentException || e is BadHttpRequestException) { if (!ctx.Response.HasStarted) ctx.Response.StatusCode = 400; }
+    catch (Exception e) when (e is JsonException || e is ArgumentException || e is BadHttpRequestException) { Console.Error.WriteLine("API_EXCEPTION " + e); if (!ctx.Response.HasStarted) ctx.Response.StatusCode = 400; }
 });
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(15), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 app.UseDefaultFiles(); app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache" });

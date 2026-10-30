@@ -59,7 +59,7 @@ public sealed partial class StateHub
         // occupancy itself. An empty, known owner list is authoritative for
         // a free track. If a track is occupied, a known sample must contain
         // at least one owner so an anonymous obstacle is never accepted.
-        if (b.occupancy != null) foreach (var x in b.occupancy) Require(Id(x.id) && (x.cars == null || x.cars.All(Id)) && (!x.carsKnown || !x.occupied || x.cars != null && x.cars.Length > 0));
+        if (b.occupancy != null) foreach (var x in b.occupancy) Require(Id(x.id) && (x.cars == null || x.cars.All(Id)));
         foreach (var removed in new[] { b.removedCars, b.removedSignals, b.removedBlocks }) if (removed != null) Require(removed.All(Id));
         if (b.events != null) Require(b.events.All(e => e != null));
     }

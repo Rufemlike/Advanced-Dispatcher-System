@@ -166,11 +166,8 @@ public sealed partial class StateHub
             Evaluate(r);
             if(reserve&&r.reservationState=="reserved")return "ROUTE_ALREADY_RESERVED";
             var allowed=new HashSet<string> {"SWITCH_MISALIGNED","TURNTABLE_MISALIGNED","SIGNAL_STOP","SIGNAL_OFF"};
-            if (alignmentOnly)
+            if (alignmentOnly || forceReservation)
                 foreach (var code in new[]{"TRACK_OCCUPIED","PROTECTION_OCCUPIED","BLOCK_OCCUPIED","OPPOSING_TRAIN"}) allowed.Add(code);
-            // BLOCK_OCCUPIED without a concrete train is a stale/advisory
-            // signal-block state. Native RouteOccupancy remains authoritative
-            // for actual cars at registration time.
             if (r.conflicts.Any(c=>c.code=="BLOCK_OCCUPIED"&&string.IsNullOrEmpty(c.train))) allowed.Add("BLOCK_OCCUPIED");
             return r.conflicts.FirstOrDefault(c=>!allowed.Contains(c.code) &&
                 !(forceReservation && r.reservationMode=="normal" && c.code=="ROUTE_OVERLAP" &&

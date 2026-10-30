@@ -51,65 +51,176 @@ public sealed partial class StateHub
             reservationOwner=previousRoute?.reservationOwner??contextJob?.assignedPlayerKey??contextJob?.ownerKey??(Capabilities.mode=="singleplayer"?"local":null),
             assignedPlayerKey=previousRoute?.assignedPlayerKey,assignedPlayerName=previousRoute?.assignedPlayerName,tracks=[],directions=[],switches=[],reservationMode="none"};
         bool compatible(RoutePlan other)=>ReservationCompatibility.CanPlanAlong(context,other);
-        var reservedTracks = avoidReservations
-            ? routes.Values.Where(other=>other.id!=ignoreRouteId&&!Ended(other)&&other.reservationState=="reserved"&&!compatible(other))
-                .SelectMany(other=>other.reservationTracks).ToHashSet()
-            : new HashSet<string>(StringComparer.Ordinal);
-        var ownSignals=ignoreRouteId!=null&&routes.TryGetValue(ignoreRouteId,out var editing)?editing.reservedSignals:Array.Empty<string>();
-        if (avoidReservations)
-            foreach(var block in blocks.Values.Where(b=>b.reserved&&!ownSignals.Contains(b.signal)&&!routes.Values.Any(r=>r.reservationState=="reserved"&&r.reservedSignals.Contains(b.signal)&&compatible(r))))
-                reservedTracks.UnionWith(block.tracks.Concat(block.extraTracks));
-        double DynamicPenalty(string id)
-        {
-            double penalty = 0;
-            bool foreignCarPresent = (trackCars.TryGetValue(id, out var members) && members.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist)) ||
-                (nativeTrackCars.TryGetValue(id, out var nativeMembers) && nativeMembers.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist));
-            if (foreignCarPresent)
-                penalty += 100000;
-            else if (occupancy.TryGetValue(id, out var sample) && sample.occupied)
-            {
-                // Only penalize if there are known foreign cars reported on this track.
-                // An occupied flag with zero cars is a phantom/stuck sensor and must not block route planning.
-                if (sample.cars != null && sample.cars.Length > 0 && !membersOrOwn(id, ownConsist))
-                {
-                    if (sample.cars.Any(member => !cars.TryGetValue(member, out var occupant) || occupant.consist != ownConsist))
-                        penalty += 100000;
-                }
-            }
-            if (reservedTracks.Contains(id))
-                penalty += 150000;
-            return ignoreRouteId!=null && penalty>0 ? double.PositiveInfinity : penalty;
-        }
-        bool membersOrOwn(string id, string consist) => trackCars.TryGetValue(id, out var members) && members.Any(member => cars.TryGetValue(member, out var occupant) && occupant.consist == consist);
         var routeFrom = car?.track1 ?? from;
-        var requestedVia = via ?? new string[0];
-        // Passenger orders are allowed to use a platform turnback/loop.  Use
-        // the passenger-aware search so a repeated physical rail is split
-        // into safe reservation stages while ordinary dispatcher and
-        // shunting paths retain the strict unique-rail search contract.
+        var ownCars = car.HasValue ? RouteOwnCars(context) : new HashSet<string>(StringComparer.Ordinal);
+        int trainDir = car.HasValue ? (Math.Abs(car.Value.speed) < 2.0 ? 0 : car.Value.direction) : 0;
+
+        bool isTrackOwn(string t) =>
+            (!string.IsNullOrEmpty(routeFrom) && t == routeFrom) ||
+            (!string.IsNullOrEmpty(ownConsist) && trackCars.TryGetValue(t, out var m) && m.Any(id => cars.TryGetValue(id, out var c) && c.consist == ownConsist)) ||
+            (!string.IsNullOrEmpty(ownConsist) && nativeTrackCars.TryGetValue(t, out var nm) && nm.Any(id => cars.TryGetValue(id, out var c) && c.consist == ownConsist)) ||
+            (ownCars.Count > 0 && trackCars.TryGetValue(t, out var tm) && tm.Any(ownCars.Contains)) ||
+            (ownCars.Count > 0 && nativeTrackCars.TryGetValue(t, out var ntm) && ntm.Any(ownCars.Contains));
+
+        bool isBlockOwn(BlockState b) =>
+            (!string.IsNullOrEmpty(routeFrom) && b.tracks.Contains(routeFrom)) ||
+            (ownCars.Count > 0 && b.trains.Any(ownCars.Contains)) ||
+            (!string.IsNullOrEmpty(ownConsist) && b.trains.Contains(ownConsist)) ||
+            b.tracks.Concat(b.extraTracks ?? Array.Empty<string>()).Any(isTrackOwn);
+
+        var ownSignals = ignoreRouteId != null && routes.TryGetValue(ignoreRouteId, out var editing) ? editing.reservedSignals : Array.Empty<string>();
+
+        // Set of reserved tracks from other active incompatible routes
+        var reservedTracks = routes.Values
+            .Where(other => other.id != ignoreRouteId && !Ended(other) && other.reservationState == "reserved" && !compatible(other))
+            .SelectMany(other => other.reservationTracks ?? Array.Empty<string>())
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Also add tracks belonging to blocks reserved by other trains
+        foreach (var block in blocks.Values.Where(b => b.reserved && !ownSignals.Contains(b.signal) &&
+            !routes.Values.Any(r => r.reservationState == "reserved" && (r.reservedSignals ?? Array.Empty<string>()).Contains(b.signal) && compatible(r))))
+        {
+            reservedTracks.UnionWith(block.tracks.Concat(block.extraTracks ?? Array.Empty<string>()));
+        }
+
+        // Set of station yard tracks (sidings, loading tracks, storage tracks).
+        // Mainline through-tracks are kept outside or given priority.
+        var stationYardTracks = locations.Values
+            .SelectMany(s => s.tracks ?? Array.Empty<string>())
+            .ToHashSet(StringComparer.Ordinal);
+
+        var requestedVia = via ?? Array.Empty<string>();
+        var requestedViaSet = requestedVia.ToHashSet(StringComparer.Ordinal);
+
+        bool IsTrackOccupied(string id)
+        {
+            if (isTrackOwn(id)) return false;
+
+            bool foreignCar = (trackCars.TryGetValue(id, out var m) && m.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist)) ||
+                              (nativeTrackCars.TryGetValue(id, out var nm) && nm.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist));
+            if (foreignCar) return true;
+
+            if (occupancy.TryGetValue(id, out var sample) && sample.occupied)
+            {
+                if (sample.cars == null || sample.cars.Length == 0 || sample.cars.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist))
+                    return true;
+            }
+
+            return false;
+        }
+
+        bool IsTrackReserved(string id)
+        {
+            if (isTrackOwn(id)) return false;
+            return reservedTracks.Contains(id);
+        }
+
         var passengerStops = JobRouteRules.Passenger(contextJob)
             ? JobRouteRules.RequiredStops(contextJob, routeFrom)
             : null;
+
+        RoutePlan RunSearch(Func<string, double> penaltyFn)
+        {
+            RoutePlan p = null;
+            try
+            {
+                p = JobRouteRules.Passenger(contextJob)
+                    ? Graph?.FindPassengerRouteVia(routeFrom, to, requestedVia, trainDir, car?.span1, penaltyFn, cancellation, passengerStops)
+                    : Graph?.FindRouteVia(routeFrom, to, requestedVia, trainDir, car?.span1, penaltyFn, cancellation);
+            }
+            catch (RouteSearchLimitException)
+            {
+                p = null;
+            }
+
+            if (p == null)
+            {
+                try
+                {
+                    p = Graph?.FindStagedRouteVia(routeFrom, to, requestedVia, trainDir, car?.span1, penaltyFn, cancellation, allowSingleStage: true);
+                }
+                catch (RouteSearchLimitException)
+                {
+                    p = null;
+                }
+            }
+            if (p == null && trainDir != 0)
+            {
+                try
+                {
+                    p = Graph?.FindStagedRouteVia(routeFrom, to, requestedVia, 0, car?.span1, penaltyFn, cancellation, allowSingleStage: true);
+                }
+                catch (RouteSearchLimitException)
+                {
+                    p = null;
+                }
+            }
+            return p;
+        }
+
         RoutePlan plan = null;
-        try
+
+        // Pass 1: Strict clear search (if avoidReservations == true)
+        // Treats occupied tracks and reserved tracks as impassable (double.PositiveInfinity).
+        // Station yard tracks get a penalty (+1000m) to prefer main through-tracks (главные пути).
+        if (avoidReservations)
         {
-            plan = (JobRouteRules.Passenger(contextJob)
-                ? Graph?.FindPassengerRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation, passengerStops)
-                : Graph?.FindRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation));
+            double StrictPenalty(string id)
+            {
+                if (id == routeFrom) return 0;
+                if (IsTrackReserved(id) || IsTrackOccupied(id))
+                    return double.PositiveInfinity;
+
+                if (stationYardTracks.Contains(id) && id != to && !requestedViaSet.Contains(id))
+                    return 1000.0;
+
+                return 0;
+            }
+
+            plan = RunSearch(StrictPenalty);
         }
-        catch (RouteSearchLimitException)
-        {
-            plan = null;
-        }
-        // A valid movement may revisit a physical rail after a turnback,
-        // require a different switch phase, or exceed constrained search complexity on long-distance runs.
-        // Retain one logical route and expose separately reservable stages (or a single stage)
-        // instead of returning a misleading complexity/no-route error.
+
+        // Pass 2: Compromise fallback search
+        // Used when Pass 1 failed (or if avoidReservations == false) AND ignoreRouteId == null.
+        // Applies finite weighted penalties so Dijkstra finds the best route with the fewest conflicts,
+        // prioritizing free mainline tracks > free yard tracks > occupied tracks > reserved tracks.
         if (plan == null)
-            plan = Graph?.FindStagedRouteVia(routeFrom, to, requestedVia, car?.direction ?? 0, car?.span1, DynamicPenalty, cancellation, allowSingleStage: true);
-        if (plan != null) {plan.train = car?.consist;plan.trainCar=car?.id;plan.trainCars=context.trainCars;plan.owner=owner;plan.reservationOwner=context.reservationOwner;
-            if (!plan.staged) { plan.activeFrom = plan.from; plan.activeTo = plan.to; plan.stageStatus = "single"; plan.stageIndex = 0; plan.stages = Array.Empty<RouteStage>(); }
-            plan.assignedPlayerKey=context.assignedPlayerKey;plan.assignedPlayerName=context.assignedPlayerName;}
+        {
+            double CompromisePenalty(string id)
+            {
+                if (id == routeFrom) return 0;
+
+                double penalty = 0;
+                if (IsTrackReserved(id))
+                    penalty += 1000000.0;
+                else if (IsTrackOccupied(id))
+                    penalty += 500000.0;
+
+                if (stationYardTracks.Contains(id) && id != to && !requestedViaSet.Contains(id))
+                    penalty += 1000.0;
+
+                return penalty;
+            }
+
+            plan = RunSearch(CompromisePenalty);
+        }
+
+        if (plan != null) {
+            plan.train = car?.consist;
+            plan.trainCar = car?.id;
+            plan.trainCars = context.trainCars;
+            plan.owner = owner;
+            plan.reservationOwner = context.reservationOwner;
+            if (!plan.staged) {
+                plan.activeFrom = plan.from;
+                plan.activeTo = plan.to;
+                plan.stageStatus = "single";
+                plan.stageIndex = 0;
+                plan.stages = Array.Empty<RouteStage>();
+            }
+            plan.assignedPlayerKey = context.assignedPlayerKey;
+            plan.assignedPlayerName = context.assignedPlayerName;
+        }
         return plan;
     }
     public RoutePlan Preview(string from, string to, string train = null, string[] via = null, CancellationToken cancellation = default, string jobId=null, int taskIndex=-1, string taskId=null, string editingId=null, string actor=null, bool avoidReservations=true)
@@ -299,21 +410,69 @@ public sealed partial class StateHub
             UpdateRoutes(true);return true;
         }
     }
+    private bool IsTrackOccupiedCheck(string id, string ownConsist, HashSet<string> ownCars)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        if (!string.IsNullOrEmpty(ownConsist) && trackCars.TryGetValue(id, out var m) && m.Any(cid => cars.TryGetValue(cid, out var c) && c.consist == ownConsist))
+            return false;
+        if (ownCars != null && ownCars.Count > 0 && trackCars.TryGetValue(id, out var tm) && tm.Any(ownCars.Contains))
+            return false;
+
+        bool foreignCar = (trackCars.TryGetValue(id, out var physical) && physical.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist)) ||
+                          (nativeTrackCars.TryGetValue(id, out var nm) && nm.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist));
+        if (foreignCar) return true;
+
+        if (occupancy.TryGetValue(id, out var sample) && sample.occupied)
+        {
+            if (sample.cars == null || sample.cars.Length == 0 || sample.cars.Any(x => !cars.TryGetValue(x, out var c) || c.consist != ownConsist))
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool IsBlockOwnCheck(BlockState b, string ownConsist, HashSet<string> ownCars) =>
+        (ownCars != null && ownCars.Count > 0 && b.trains.Any(ownCars.Contains)) ||
+        (!string.IsNullOrEmpty(ownConsist) && b.trains.Contains(ownConsist));
+
+    private bool IsTrackReservedCheck(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        if (routes.Values.Any(r => !Ended(r) && r.reservationState == "reserved" && (r.reservationTracks ?? Array.Empty<string>()).Contains(id)))
+            return true;
+        return false;
+    }
+
     public string RouteFailure(string from,string to,string train=null, string[] via=null) {
         lock(sync) {
             var car=RouteTrain(train);
             if(!string.IsNullOrEmpty(train)&&!car.HasValue)return "TRAIN_UNAVAILABLE";
             if (Graph == null) return "WORLD_NOT_READY";
             var start = car?.track1 ?? from;
-            var dir = car?.direction ?? 0;
+            var dir = car.HasValue ? (Math.Abs(car.Value.speed) < 2.0 ? 0 : car.Value.direction) : 0;
+            string ownConsist = car?.consist ?? train;
+            var ownCars = car.HasValue ? RouteOwnCars(new RoutePlan { train = ownConsist }) : new HashSet<string>(StringComparer.Ordinal);
+
+            if (!string.IsNullOrEmpty(to)) {
+                if (IsTrackOccupiedCheck(to, ownConsist, ownCars)) return "DESTINATION_OCCUPIED";
+                if (IsTrackReservedCheck(to)) return "DESTINATION_RESERVED";
+            }
+            if (!string.IsNullOrEmpty(start) && start != to) {
+                if (IsTrackOccupiedCheck(start, ownConsist, ownCars)) return "START_TRACK_OCCUPIED";
+                if (IsTrackReservedCheck(start)) return "START_TRACK_RESERVED";
+            }
+
             if (via != null && via.Length > 0) {
                 if (via.Length > 128 || via.Any(string.IsNullOrEmpty) || via.Any(id => !Graph.Tracks.ContainsKey(id)) || via.Distinct(StringComparer.Ordinal).Count() != via.Length || via.Contains(start) || via.Contains(to)) return "NO_ROUTE";
                 try {
-                    if(Graph.FindRouteVia(start,to,via,dir,car?.span1)!=null)return null;
+                    if(Graph.FindRouteVia(start,to,via,dir,car?.span1)!=null)return "ROUTE_BLOCKED_BY_OBSTACLE";
                 } catch(RouteSearchLimitException) { }
                 if (Graph.FindStagedRouteVia(start,to,via,dir,car?.span1,allowSingleStage:true)!=null) return "ROUTE_MANEUVER_REQUIRED";
                 return Graph.HasOrderedWalk(start,to,via,dir)?"ROUTE_MANEUVER_REQUIRED":"NO_ROUTE";
             }
+            try {
+                if(Graph.FindRouteVia(start,to,Array.Empty<string>(),dir,car?.span1)!=null)return "ROUTE_BLOCKED_BY_OBSTACLE";
+            } catch(RouteSearchLimitException) { }
             if (Graph.FindStagedRouteVia(start,to,Array.Empty<string>(),dir,car?.span1,allowSingleStage:true)!=null) return "ROUTE_MANEUVER_REQUIRED";
             return Graph.RouteFailure(start,to,dir);
         }
@@ -498,7 +657,7 @@ public sealed partial class StateHub
             {
                 if (block.reserved && !plan.reservedSignals.Contains(block.signal) && !routes.Values.Any(other=>other.reservationState=="reserved" && other.reservedSignals.Contains(block.signal) && ReservationCompatibility.CanPlanAlong(plan,other))) Warn("SIGNAL_RESERVED", "blocks", block.id, id);
                 bool blockOwn = ownTrainPresent || block.trains.Any(ownCars.Contains) || block.tracks.Concat(block.extraTracks ?? Array.Empty<string>()).Any(track => nativeTrackCars.TryGetValue(track, out var native) && native.Any(ownCars.Contains));
-                if (block.occupied && !block.trains.Any() && !blockOwn) Warn("BLOCK_OCCUPIED", "blocks", block.id, id);
+                if (block.occupied && !blockOwn) Warn("BLOCK_OCCUPIED", "blocks", block.id, id, block.trains.FirstOrDefault(t => !ownCars.Contains(t) && t != plan.train));
                 int at = Array.IndexOf(block.tracks, id);
                 if (at < 0) continue; // Crossing/extra occupancy is a conflict, not a traversed block.
                 if (at >= 0 && at < block.directions.Length && block.directions[at] != 0 && block.directions[at] != direction) continue;

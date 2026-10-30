@@ -131,7 +131,7 @@ public sealed partial class StateHub
             players = Json.Read<PlayerState[]>(Json.Bytes(players.Values.ToArray())),
             signals = Json.Read<SignalState[]>(Json.Bytes(signals.Values.ToArray())),
             blocks = Json.Read<BlockState[]>(Json.Bytes(blocks.Values.ToArray())),
-            occupancy = Json.Read<OccupancyState[]>(Json.Bytes(occupancy.Values.ToArray())),
+            occupancy = Json.Read<OccupancyState[]>(Json.Bytes(occupancy.Values.Select(o => o.occupied && o.carsKnown && (o.cars == null || o.cars.Length == 0) ? new OccupancyState { id = o.id, occupied = o.occupied, cars = o.cars, carsKnown = false, sampledAt = o.sampledAt } : o).ToArray())),
             jobs = Json.Read<JobState[]>(Json.Bytes(jobs.Values.ToArray())),
             locations = Json.Read<StationDef[]>(Json.Bytes(locations.Values.ToArray())),
             signs = Json.Read<SignState[]>(Json.Bytes(signs.Values.ToArray())),
@@ -224,11 +224,13 @@ public sealed partial class StateHub
                 foreach (string id in observedTracks)
                 {
                     nativeOccupancy.TryGetValue(id, out var native); bodyCounts.TryGetValue(id, out int count);
-                    // The game already limits unchanged native samples. Every received
-                    // observation must advance freshness, even just below that interval.
-                    // A car-membership update does not prove an old native sample is fresh.
-                    var value = new OccupancyState { id = id, occupied = native.occupied || count > 0, cars = native.cars ?? Array.Empty<string>(), carsKnown = native.carsKnown, sampledAt = native.sampledAt };
-                    if (!occupancy.TryGetValue(id, out var old) || old.occupied != value.occupied || old.sampledAt != value.sampledAt) { occupancy[id] = value; updates.Add(value); }
+                    bool occupied = native.occupied || count > 0;
+                    var cars = native.cars != null && native.cars.Length > 0
+                        ? native.cars
+                        : (trackCars.TryGetValue(id, out var tc) && tc.Count > 0 ? tc.Distinct().ToArray() : Array.Empty<string>());
+                    bool carsKnown = native.carsKnown && (!occupied || cars.Length > 0);
+                    var value = new OccupancyState { id = id, occupied = occupied, cars = cars, carsKnown = carsKnown, sampledAt = native.sampledAt };
+                    if (!occupancy.TryGetValue(id, out var old) || old.occupied != value.occupied || old.sampledAt != value.sampledAt || old.carsKnown != value.carsKnown) { occupancy[id] = value; updates.Add(value); }
                 }
                 batch.occupancy = updates.ToArray();
             }

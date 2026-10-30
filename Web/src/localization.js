@@ -653,6 +653,26 @@ const dictionary = {
     "No route through the current connections in the train’s direction. Choose another destination or reverse the train.",
     "Нет маршрута по текущим соединениям в направлении движения поезда. Выберите другой путь или измените направление движения.",
   ],
+  DESTINATION_OCCUPIED: [
+    "Destination track is occupied by other cars. Clear the track with shunting or choose a free station track.",
+    "Путь назначения занят другими вагонами. Освободите путь маневрами или выберите свободный путь станции.",
+  ],
+  DESTINATION_RESERVED: [
+    "Destination track is reserved by another route.",
+    "Путь назначения зарезервирован другим маршрутом.",
+  ],
+  START_TRACK_OCCUPIED: [
+    "Start track is occupied by foreign cars.",
+    "Начальный путь занят чужими вагонами.",
+  ],
+  START_TRACK_RESERVED: [
+    "Start track is reserved by another route.",
+    "Начальный путь зарезервирован другим маршрутом.",
+  ],
+  ROUTE_BLOCKED_BY_OBSTACLE: [
+    "Connecting tracks to the destination are occupied by other cars or reserved. Clear the tracks or disable avoiding reservations.",
+    "Пути к назначению заняты другими вагонами или зарезервированы. Освободите пути или отключите «Избегать чужих резерваций».",
+  ],
   ROUTE_PARTIAL: [
     "Some route commands could not be applied; inspect the indicated object",
     "Часть команд маршрута не выполнена; проверьте указанный объект",

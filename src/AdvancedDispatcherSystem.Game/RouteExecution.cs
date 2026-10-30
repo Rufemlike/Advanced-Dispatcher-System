@@ -76,18 +76,32 @@ namespace AdvancedDispatcherSystem.Game
             }
             return result.ToArray();
         }
-        private string SwitchSafety(Junction junction)
+        private string SwitchSafety(Junction junction, string routeId = null)
         {
             var p = junction.position - WorldMover.currentMove;
             var branchTracks = new HashSet<string>(junction.outBranches.Select(b => TrackId(b?.track)).Where(t => t != null));
             branchTracks.Add(TrackId(junction.inBranch?.track));
+            string ownConsist = null;
+            HashSet<string> ownCars = null;
+            if (!string.IsNullOrEmpty(routeId) && watchedRoutes.TryGetValue(routeId, out var wr) && wr.plan != null)
+            {
+                ownConsist = wr.plan.train;
+                if (wr.plan.trainCars != null) ownCars = new HashSet<string>(wr.plan.trainCars, StringComparer.Ordinal);
+            }
             foreach (var c in LiveRouteCars())
             {
                 var footprint = executionGraph?.Footprint(c);
                 bool nearbyTrack = branchTracks.Contains(c.track1) || branchTracks.Contains(c.track2) || footprint != null && footprint.Any(branchTracks.Contains);
                 if (!nearbyTrack) continue;
+                bool isOwn = (ownCars != null && ownCars.Contains(c.id)) || (!string.IsNullOrEmpty(ownConsist) && c.consist == ownConsist);
+                if (footprint != null && footprint.Count(branchTracks.Contains) > 1) return "SWITCH_OCCUPIED";
+                if (isOwn)
+                {
+                    if (Math.Abs(c.speed) > 1) return "APPROACHING_TRAIN";
+                    continue;
+                }
                 double distance = Math.Sqrt((c.x-p.x)*(c.x-p.x)+(c.z-p.z)*(c.z-p.z));
-                if (distance < c.length / 2 + 12 || footprint != null && footprint.Count(branchTracks.Contains) > 1) return "SWITCH_OCCUPIED";
+                if (distance < c.length / 2 + 12) return "SWITCH_OCCUPIED";
                 if (Math.Abs(c.speed) > 1 && distance < c.length / 2 + Math.Max(30, Math.Abs(c.speed) / 3.6 * 6)) return "APPROACHING_TRAIN";
             }
             return null;
@@ -277,7 +291,7 @@ namespace AdvancedDispatcherSystem.Game
                 bool restored=true;
                 foreach (var item in changed.AsEnumerable().Reverse())
                 {
-                    try { if (item.junction.selectedBranch != item.branch && AllowsProtectedSwitch(item.junction, item.branch, c.target) && SwitchSafety(item.junction) == null) SetJunctionBranch(item.junction, item.branch); }
+                    try { if (item.junction.selectedBranch != item.branch && AllowsProtectedSwitch(item.junction, item.branch, c.target) && SwitchSafety(item.junction, c.target) == null) SetJunctionBranch(item.junction, item.branch); }
                     catch(Exception e) { Main.Log("SWITCH_ROLLBACK_FAILED",e); }
                     RefreshJunction(item.junction);
                     if(item.junction.selectedBranch!=item.branch)restored=false;
@@ -295,7 +309,7 @@ namespace AdvancedDispatcherSystem.Game
                     if (!junctionById.TryGetValue(step.id ?? "", out var junction) || junction == null || step.branch < 0 || step.branch >= junction.outBranches.Count) { error = "NOT_FOUND"; break; }
                     if (junction.selectedBranch == step.branch) continue;
                     if (!AllowsProtectedSwitch(junction, step.branch, c.target)) { error = "SWITCH_LOCKED"; break; }
-                    error = SwitchSafety(junction); if (error != null) break;
+                    error = SwitchSafety(junction, c.target); if (error != null) break;
                     changed.Add((junction, junction.selectedBranch));
                     SetJunctionBranch(junction, (byte)step.branch); RefreshJunction(junction);
                     if (junction.selectedBranch != step.branch) { error = "SWITCH_CHANGED_EXTERNALLY"; break; }
